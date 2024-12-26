@@ -30,10 +30,17 @@ forex_terms = {
     "зарна": "SELL",
     "ХУДАЛДАА": "BUY",
     "ХУДАЛДАН АВАХ": "BUY",
+    "ХУДАЛДАН АВАРАЙ": "BUY",
+    "ХУДАЛДАН АВНА": "BUY",
     "Алдагдлаа зогсооно": "Stop Loss",
     "Алдагдлыг зогсоох": "Stop Loss",
     "Ашиг аваарай": "Take Profit",
+    "АШИГ АВАХ": "Take Profit",
+    "дахин": "X",
+    "АШИГ АВ": "Take Profit",
     "Ашиг авна": "Take Profit",
+    "Дээрх оруулна уу": "Арилжаанд орох ханш ",
+    "хамгийн их утга нь ": "Арилжаанд орох хамгийн дээд ханш ",
     "ХУДАЛДАН АВААР АВЧ Ашиг": "Take Profit",
     "PIPS": "PIPS",
     "EURNZD": "EURNZD",
@@ -63,13 +70,19 @@ def replace_forex_terms(text: str) -> str:
     return text
 
 
-import re
-
-
 def process_text(message_text: str) -> str:
     """
     Process the message text to filter out unwanted content and add promotional text.
     """
+    # Filter out promotional messages
+    if re.search(
+        r"\b(Ad|offer|altcoin|apology|sorry|support|market)\b",
+        message_text,
+        re.IGNORECASE,
+    ):
+        logger.info("Skipping promotional message.")
+        return None
+
     # Replace green hearts with dollar emojis (if needed)
     filtered_text = message_text.replace("💚", "💵")
 
@@ -89,11 +102,17 @@ def process_text(message_text: str) -> str:
     # Remove everything after the ⚠️ emoji (including the emoji itself)
     filtered_text = re.sub(r"⚠️.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
+    # Remove everything after the 👋 emoji (including the emoji itself)
+    filtered_text = re.sub(r"👋.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
     # Remove trailing or unnecessary whitespace
     filtered_text = filtered_text.strip()
 
-    # Add blank line and promo text
-    filtered_text += "\n\n💸💸💸 Zetland-Tips 💰💰💰"
+    # Remove any text that contains 'WOLFXSIGNALS.COM'
+    filtered_text = re.sub(r"(?i).*WOLFXSIGNALS\.COM.*", "", filtered_text).strip()
+
+    # Remove any line that contains '@WOLFX_SIGNALS'
+    filtered_text = re.sub(r"(?i)^.*@WOLFX_SIGNALS.*\n?", "", filtered_text)
 
     return filtered_text if filtered_text else None
 
@@ -102,34 +121,29 @@ def process_text(message_text: str) -> str:
 async def copy_and_translate_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """
-    Copy messages from source channel to destination channel, translating text to Mongolian.
-    """
     try:
         if update.channel_post and update.channel_post.chat_id == SOURCE_CHANNEL:
             original_message = update.channel_post
 
             if original_message.text:
-                # Process and translate the text
                 processed_text = process_text(original_message.text)
-                if processed_text:  # Only process if there's text left after filtering
+                if processed_text:
                     translated_text = custom_translate(processed_text)
-                    # Replace forex terms back to English
                     final_text = replace_forex_terms(translated_text)
+                    # Append the promo text after translation
+                    final_text += " \n\n ❗Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй. \n\n💸💸💸 Plus-Mongolia-Signal 💰💰💰"
                     await context.bot.send_message(
-                        chat_id=DESTINATION_CHANNEL,
-                        text=final_text,
+                        chat_id=DESTINATION_CHANNEL, text=final_text
                     )
             elif original_message.caption and original_message.photo:
-                # Process and translate the caption if a photo is present
                 processed_caption = process_text(original_message.caption)
                 if processed_caption:
                     translated_caption = custom_translate(processed_caption)
-                    # Replace forex terms back to English
                     final_caption = replace_forex_terms(translated_caption)
+                    # Append the promo text after translation
+                    final_caption += " \n\n ❗Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй. \n\n💸💸💸 Plus-Mongolia-Signal 💰💰💰"
                     await context.bot.send_message(
-                        chat_id=DESTINATION_CHANNEL,
-                        text=final_caption,
+                        chat_id=DESTINATION_CHANNEL, text=final_caption
                     )
             logger.info("Message processed, translated, and copied successfully.")
     except Exception as e:
