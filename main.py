@@ -102,19 +102,26 @@ def process_text(message_text: str) -> str:
     # Remove everything after the ⚠️ emoji (including the emoji itself)
     filtered_text = re.sub(r"⚠️.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
-    # Remove everything after the 👋 emoji (including the emoji itself)
+    # **Remove everything after the 👋 emoji (including the emoji itself)**
     filtered_text = re.sub(r"👋.*$", "", filtered_text, flags=re.MULTILINE).strip()
-
-    # Remove trailing or unnecessary whitespace
-    filtered_text = filtered_text.strip()
 
     # Remove any text that contains 'WOLFXSIGNALS.COM'
     filtered_text = re.sub(r"(?i).*WOLFXSIGNALS\.COM.*", "", filtered_text).strip()
 
-    # Remove any line that contains '@WOLFX_SIGNALS'
+    # **Remove any line that contains '@WOLFX_SIGNALS'**
     filtered_text = re.sub(r"(?i)^.*@WOLFX_SIGNALS.*\n?", "", filtered_text)
 
+    # Remove trailing or unnecessary whitespace
+    filtered_text = filtered_text.strip()
+
     return filtered_text if filtered_text else None
+
+
+def is_signal_message(text: str) -> bool:
+    """
+    Determine if a message is a signal message based on its format.
+    """
+    return bool(re.search(r"\b(SL|TP\d+)\b", text))
 
 
 # Async function to handle translation and copying
@@ -130,8 +137,14 @@ async def copy_and_translate_message(
                 if processed_text:
                     translated_text = custom_translate(processed_text)
                     final_text = replace_forex_terms(translated_text)
-                    # Append the promo text after translation
-                    final_text += " \n\n ❗Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй. \n\n💸💸💸 Plus-Mongolia-Signal 💰💰💰"
+
+                    # Check if the message is a signal message
+                    if is_signal_message(final_text):
+                        final_text += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
+
+                    # Append the promotional text
+                    final_text += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
+
                     await context.bot.send_message(
                         chat_id=DESTINATION_CHANNEL, text=final_text
                     )
@@ -140,8 +153,14 @@ async def copy_and_translate_message(
                 if processed_caption:
                     translated_caption = custom_translate(processed_caption)
                     final_caption = replace_forex_terms(translated_caption)
-                    # Append the promo text after translation
-                    final_caption += " \n\n ❗Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй. \n\n💸💸💸 Plus-Mongolia-Signal 💰💰💰"
+
+                    # Check if the message is a signal message
+                    if is_signal_message(final_caption):
+                        final_caption += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
+
+                    # Append the promotional text
+                    final_caption += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
+
                     await context.bot.send_message(
                         chat_id=DESTINATION_CHANNEL, text=final_caption
                     )
