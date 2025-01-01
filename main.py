@@ -1,10 +1,11 @@
 import logging
+import re
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
+import json
 import os
-import re
 
 # Load environment variables
 load_dotenv()
@@ -23,32 +24,23 @@ DESTINATION_CHANNEL = int(os.getenv("TEST"))
 # Translator instance
 translator = GoogleTranslator(source="en", target="mn")
 
-# Forex terms and their English replacements
-forex_terms = {
-    "АЛТ": "GOLD",
-    "ЗАРНА": "SELL",
-    "зарна": "SELL",
-    "ХУДАЛДАА": "BUY",
-    "ХУДАЛДАН АВАХ": "BUY",
-    "ХУДАЛДАН АВАРАЙ": "BUY",
-    "ХУДАЛДАН АВНА": "BUY",
-    "Алдагдлаа зогсооно": "Stop Loss",
-    "Алдагдлыг зогсоох": "Stop Loss",
-    "Ашиг аваарай": "Take Profit",
-    "АШИГ АВАХ": "Take Profit",
-    "дахин": "X",
-    "АШИГ АВ": "Take Profit",
-    "Ашиг авна": "Take Profit",
-    "Дээрх оруулна уу": "Арилжаанд орох ханш ",
-    "хамгийн их утга нь ": "Арилжаанд орох хамгийн дээд ханш ",
-    "ХУДАЛДАН АВААР АВЧ Ашиг": "Take Profit",
-    "PIPS": "PIPS",
-    "EURNZD": "EURNZD",
-    "GBPCAD": "GBPCAD",
-    "EURJPY": "EURJPY",
-}
 
-# Reverse forex terms for replacement in text
+# Load forex terms from external JSON file
+def load_forex_terms(file_path="forex_terms.json"):
+    try:
+        with open(file_path, "r", encoding="utf-8") as file:
+            forex_terms = json.load(file)
+            return forex_terms
+    except FileNotFoundError:
+        logger.error(f"Forex terms file '{file_path}' not found.")
+        return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON in '{file_path}': {e}")
+        return {}
+
+
+# Load terms and create reverse mapping
+forex_terms = load_forex_terms()
 forex_terms_reverse = {v: k for k, v in forex_terms.items()}
 
 
@@ -64,19 +56,71 @@ def replace_forex_terms(text: str) -> str:
     """
     Replace the translated forex terms back to English.
     """
-    # Iterate through forex terms and replace both in Mongolian and English context
     for term_mn, term_en in forex_terms.items():
         text = re.sub(rf"\b{re.escape(term_mn)}\b", term_en, text)
     return text
 
 
+def is_nullified_trade_message(text: str) -> bool:
+    """
+    Checks if the message is a nullified trade message.
+    """
+    text = text.replace("\n", " ")
+    pattern = re.compile(
+        r"will be considered as NULL.*didn’t reach the Entry Zone", re.UNICODE
+    )
+    return bool(pattern.search(text))
+
+
+def extract_trade_details(text: str) -> dict:
+    """
+    Extracts trade details from the message.
+    """
+    trade_pair_match = re.search(
+        r"\➕(.*?) will be considered as NULL", text, re.DOTALL
+    )
+    if trade_pair_match:
+        trade_pair = trade_pair_match.group(1).strip()
+        base_currency, quote_currency = trade_pair.split("/")
+    else:
+        trade_pair = "Unknown"
+        base_currency = "Unknown"
+        quote_currency = "Unknown"
+
+    profit_percent_match = re.search(r"\((.*?)%\s+PROFIT", text)
+    if profit_percent_match:
+        profit_percent = profit_percent_match.group(1).strip()
+    else:
+        profit_percent = "Unknown"
+
+    return {
+        "trade_pair": trade_pair,
+        "base_currency": base_currency,
+        "profit_percent": profit_percent,
+    }
+
+
+def custom_translate_nullified_trade(text: str) -> str:
+    """
+    Translates a nullified trade message into the desired format.
+    """
+    details = extract_trade_details(text)
+    trade_pair = details["trade_pair"]
+    profit_percent = details["profit_percent"]
+    base_currency = details["base_currency"]
+
+    translated_message = f"➕{trade_pair}-г арилжаа цуцлагдсан. ({profit_percent}% Aшиг/Aлдагдал)\n\n➡️{base_currency} нь арилжаанд орох ханшинд хүрэхээс өмнө SL цохьсон байна."
+
+    return translated_message
+
+
 def process_text(message_text: str) -> str:
     """
-    Process the message text to filter out unwanted content and add promotional text.
+    Process the message text to filter out unwanted content.
     """
     # Filter out promotional messages
     if re.search(
-        r"\b(Ad|offer|altcoin|apology|sorry|support|market)\b",
+        r"\b(Ad|offer|altcoin|apology|sorry|support|market|markets|recover|Let's)\b",
         message_text,
         re.IGNORECASE,
     ):
@@ -102,13 +146,22 @@ def process_text(message_text: str) -> str:
     # Remove everything after the ⚠️ emoji (including the emoji itself)
     filtered_text = re.sub(r"⚠️.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
-    # **Remove everything after the 👋 emoji (including the emoji itself)**
+    # Remove everything after the 👋 emoji (including the emoji itself)
     filtered_text = re.sub(r"👋.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
+    # Remove everything after the ⭐️ emoji (including the emoji itself)
+    filtered_text = re.sub(r"⭐️.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
+    # Remove everything after the ✉️ emoji (including the emoji itself)
+    filtered_text = re.sub(r"✉️.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
+    # Remove everything after the 🟢 emoji (including the emoji itself)
+    filtered_text = re.sub(r"🟢.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
     # Remove any text that contains 'WOLFXSIGNALS.COM'
     filtered_text = re.sub(r"(?i).*WOLFXSIGNALS\.COM.*", "", filtered_text).strip()
 
-    # **Remove any line that contains '@WOLFX_SIGNALS'**
+    # Remove any line that contains '@WOLFX_SIGNALS'
     filtered_text = re.sub(r"(?i)^.*@WOLFX_SIGNALS.*\n?", "", filtered_text)
 
     # Remove trailing or unnecessary whitespace
@@ -121,10 +174,9 @@ def is_signal_message(text: str) -> bool:
     """
     Determine if a message is a signal message based on its format.
     """
-    return bool(re.search(r"\b(SL|TP\d+)\b", text))
+    return bool(re.search(r"\b(BUY|SELL|Buy|Sell\d+)\b", text))
 
 
-# Async function to handle translation and copying
 async def copy_and_translate_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
@@ -135,34 +187,54 @@ async def copy_and_translate_message(
             if original_message.text:
                 processed_text = process_text(original_message.text)
                 if processed_text:
-                    translated_text = custom_translate(processed_text)
-                    final_text = replace_forex_terms(translated_text)
+                    if is_nullified_trade_message(processed_text):
+                        logger.info("Nullified trade message detected.")
+                        translated_text = custom_translate_nullified_trade(
+                            processed_text
+                        )
+                        logger.info(f"Translated text: {translated_text}")
+                    else:
+                        logger.info("Default translation path.")
+                        translated_text = custom_translate(processed_text)
+                        translated_text = replace_forex_terms(translated_text)
+                        logger.info(f"Translated text: {translated_text}")
 
                     # Check if the message is a signal message
-                    if is_signal_message(final_text):
-                        final_text += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
+                    if is_signal_message(translated_text):
+                        translated_text += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
 
                     # Append the promotional text
-                    final_text += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
+                    translated_text += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
 
                     await context.bot.send_message(
-                        chat_id=DESTINATION_CHANNEL, text=final_text
+                        chat_id=DESTINATION_CHANNEL,
+                        text=translated_text,
+                        parse_mode=None,
                     )
             elif original_message.caption and original_message.photo:
                 processed_caption = process_text(original_message.caption)
                 if processed_caption:
-                    translated_caption = custom_translate(processed_caption)
-                    final_caption = replace_forex_terms(translated_caption)
+                    if is_nullified_trade_message(processed_caption):
+                        translated_caption = custom_translate_nullified_trade(
+                            processed_caption
+                        )
+                        logger.info(f"Translated caption: {translated_caption}")
+                    else:
+                        translated_caption = custom_translate(processed_caption)
+                        translated_caption = replace_forex_terms(translated_caption)
+                        logger.info(f"Translated caption: {translated_caption}")
 
                     # Check if the message is a signal message
-                    if is_signal_message(final_caption):
-                        final_caption += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
+                    if is_signal_message(translated_caption):
+                        translated_caption += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
 
                     # Append the promotional text
-                    final_caption += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
+                    translated_caption += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
 
                     await context.bot.send_message(
-                        chat_id=DESTINATION_CHANNEL, text=final_caption
+                        chat_id=DESTINATION_CHANNEL,
+                        text=translated_caption,
+                        parse_mode=None,
                     )
             logger.info("Message processed, translated, and copied successfully.")
     except Exception as e:
