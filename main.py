@@ -2,7 +2,7 @@ import logging
 import re
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from deep_translator import GoogleTranslator
+from translate import Translator  # Using translate library instead of deep_translator
 from dotenv import load_dotenv
 import json
 import os
@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 # Read variables from .env
 TOKEN = os.getenv("API")
-SOURCE_CHANNEL = int(os.getenv("TEST2"))
-DESTINATION_CHANNEL = int(os.getenv("TEST"))
+SOURCE_CHANNEL = int(os.getenv("Orchuulagch"))
+DESTINATION_CHANNEL = int(os.getenv("Huleen_Avagch"))
 
-# Translator instance
-translator = GoogleTranslator(source="en", target="mn")
+# Translator instance using the translate library
+translator = Translator(from_lang="en", to_lang="mn")
 
 
 # Load forex terms from external JSON file
@@ -109,8 +109,10 @@ def custom_translate_nullified_trade(text: str) -> str:
     profit_percent = details["profit_percent"]
     base_currency = details["base_currency"]
 
-    translated_message = f"➕{trade_pair}-г арилжаа цуцлагдсан. ({profit_percent}% Aшиг/Aлдагдал)\n\n➡️{base_currency} нь арилжаанд орох ханшинд хүрэхээс өмнө SL цохьсон байна."
-
+    translated_message = (
+        f"➕{trade_pair}-г арилжаа цуцлагдсан. ({profit_percent}% Aшиг/Aлдагдал)\n\n"
+        f"➡️{base_currency} нь арилжаанд орох ханшинд хүрэхээс өмнө SL цохьсон байна."
+    )
     return translated_message
 
 
@@ -120,7 +122,7 @@ def process_text(message_text: str) -> str:
     """
     # Filter out promotional messages
     if re.search(
-        r"\b(Ad|offer|altcoin|apology|sorry|support|market|markets|recover|Let's)\b",
+        r"\b(Ad|offer|altcoin|apology|sorry|support|market|markets|recover|candle|risk|luck)\b",
         message_text,
         re.IGNORECASE,
     ):
@@ -135,8 +137,9 @@ def process_text(message_text: str) -> str:
     filtered_text = parts[0].strip()
 
     # Remove content after fire emoji (if needed)
-    parts = filtered_text.split("🔥")
-    filtered_text = parts[0].strip()
+    if "🔥" in filtered_text:
+        parts = filtered_text.split("🔥", 1)
+        filtered_text = parts[0].strip() + "🔥"
 
     # Remove guide and weblink
     filtered_text = re.sub(
@@ -144,13 +147,24 @@ def process_text(message_text: str) -> str:
     ).strip()
 
     # Remove everything after the ⚠️ emoji (including the emoji itself)
-    filtered_text = re.sub(r"⚠️.*$", "", filtered_text, flags=re.MULTILINE).strip()
+    filtered_text = re.sub(
+        r"^(?=.*⚠️)(?!.*\bSL\b)(?!.*Stop Loss)(?!.*Take Profit)(?!.*\bTP\b).*$",
+        "",
+        filtered_text,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
 
     # Remove everything after the 👋 emoji (including the emoji itself)
     filtered_text = re.sub(r"👋.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
+    # Remove everything after the 🐺 emoji (including the emoji itself)
+    filtered_text = re.sub(r"🐺.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
     # Remove everything after the ⭐️ emoji (including the emoji itself)
     filtered_text = re.sub(r"⭐️.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
+    # Remove everything after the • emoji (including the emoji itself)
+    filtered_text = re.sub(r"•.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
     # Remove everything after the ✉️ emoji (including the emoji itself)
     filtered_text = re.sub(r"✉️.*$", "", filtered_text, flags=re.MULTILINE).strip()
@@ -163,6 +177,14 @@ def process_text(message_text: str) -> str:
 
     # Remove any line that contains '@WOLFX_SIGNALS'
     filtered_text = re.sub(r"(?i)^.*@WOLFX_SIGNALS.*\n?", "", filtered_text)
+
+    # Remove any line that contains '@WolFX_Signals' (case-insensitive)
+    filtered_text = re.sub(
+        r"(?i)^.*@WolFX_Signals.*\n?", "", filtered_text, flags=re.MULTILINE
+    )
+
+    # Remove any line containing the word "wolf" (case-insensitive, even as part of a larger word)
+    filtered_text = re.sub(r"(?i)^.*wolf.*\n?", "", filtered_text, flags=re.MULTILINE)
 
     # Remove trailing or unnecessary whitespace
     filtered_text = filtered_text.strip()
