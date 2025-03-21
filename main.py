@@ -46,10 +46,41 @@ forex_terms_reverse = {v: k for k, v in forex_terms.items()}
 
 def custom_translate(text: str) -> str:
     """
-    Translate the entire text to Mongolian.
+    Translate the text to Mongolian by splitting into chunks if necessary.
     """
-    translated_text = translator.translate(text)
-    return translated_text
+    # If text is within the limit, translate directly
+    if len(text) <= 500:
+        return translator.translate(text)
+
+    # Split the text by newlines to create logical chunks
+    lines = text.split("\n")
+    translated_lines = []
+    current_chunk = ""
+
+    for line in lines:
+        # If adding this line would exceed our limit, translate what we have so far
+        if len(current_chunk) + len(line) + 1 > 450:  # Leave some margin
+            if current_chunk:
+                translated_lines.append(translator.translate(current_chunk))
+                current_chunk = line
+            else:
+                # If a single line is too long, split it further
+                for i in range(0, len(line), 400):
+                    chunk = line[i : i + 400]
+                    translated_lines.append(translator.translate(chunk))
+        else:
+            # Add to current chunk if it fits
+            if current_chunk:
+                current_chunk += "\n" + line
+            else:
+                current_chunk = line
+
+    # Don't forget to translate the last chunk
+    if current_chunk:
+        translated_lines.append(translator.translate(current_chunk))
+
+    # Join all translated parts
+    return "\n".join(translated_lines)
 
 
 def replace_forex_terms(text: str) -> str:
@@ -57,7 +88,14 @@ def replace_forex_terms(text: str) -> str:
     Replace the translated forex terms back to English.
     """
     for term_mn, term_en in forex_terms.items():
-        text = re.sub(rf"\b{re.escape(term_mn)}\b", term_en, text)
+        # For terms containing special characters like emojis, we need a different approach
+        # than word boundaries
+        if any(char in term_mn for char in "💰📊🔥👉📈✅🔴🟢🔹"):
+            # Use literal string replacement instead of regex with word boundaries
+            text = text.replace(term_mn, term_en)
+        else:
+            # For normal terms use word boundaries to avoid partial matches
+            text = re.sub(rf"\b{re.escape(term_mn)}\b", term_en, text)
     return text
 
 
@@ -66,9 +104,7 @@ def is_nullified_trade_message(text: str) -> bool:
     Checks if the message is a nullified trade message.
     """
     text = text.replace("\n", " ")
-    pattern = re.compile(
-        r"will be considered as NULL.*didn’t reach the Entry Zone", re.UNICODE
-    )
+    pattern = re.compile(r"will be considered as NULL", re.UNICODE)
     return bool(pattern.search(text))
 
 
@@ -76,12 +112,24 @@ def extract_trade_details(text: str) -> dict:
     """
     Extracts trade details from the message.
     """
+    # Try to find pattern with ➕ first
     trade_pair_match = re.search(
         r"\➕(.*?) will be considered as NULL", text, re.DOTALL
     )
+
+    # If not found, try without the ➕ symbol
+    if not trade_pair_match:
+        trade_pair_match = re.search(
+            r"([\w]+/[\w]+) will be considered as NULL", text, re.DOTALL
+        )
+
     if trade_pair_match:
         trade_pair = trade_pair_match.group(1).strip()
-        base_currency, quote_currency = trade_pair.split("/")
+        if "/" in trade_pair:
+            base_currency, quote_currency = trade_pair.split("/")
+        else:
+            base_currency = trade_pair
+            quote_currency = "Unknown"
     else:
         trade_pair = "Unknown"
         base_currency = "Unknown"
@@ -122,7 +170,7 @@ def process_text(message_text: str) -> str:
     """
     # Filter out promotional messages
     if re.search(
-        r"\b(Ad|offer|altcoin|apology|sorry|support|market|markets|recover|candle|risk|luck)\b",
+        r"\b(Ad|altcoin|apology|sorry|support|recover|candle|risk|luck|refer|paypal|positive|subscription|appreciating|movements|market|markets|tests|test|yes)\b",
         message_text,
         re.IGNORECASE,
     ):
@@ -135,6 +183,9 @@ def process_text(message_text: str) -> str:
     # Remove content below the horizontal line
     parts = re.split(r"[-—_]{3,}", filtered_text)
     filtered_text = parts[0].strip()
+
+    # Remove the 📊 emoji
+    filtered_text = filtered_text.replace("📊", "")
 
     # Remove content after fire emoji (if needed)
     if "🔥" in filtered_text:
@@ -162,6 +213,9 @@ def process_text(message_text: str) -> str:
 
     # Remove everything after the ⭐️ emoji (including the emoji itself)
     filtered_text = re.sub(r"⭐️.*$", "", filtered_text, flags=re.MULTILINE).strip()
+
+    # Remove everything after the 👉 emoji (including the emoji itself)
+    filtered_text = re.sub(r"👉.*$", "", filtered_text, flags=re.MULTILINE).strip()
 
     # Remove everything after the • emoji (including the emoji itself)
     filtered_text = re.sub(r"•.*$", "", filtered_text, flags=re.MULTILINE).strip()
@@ -226,6 +280,24 @@ async def copy_and_translate_message(
                         translated_text += " \n\n ❗️Арилжаанд орох хамгийн дээд ханшнаас дээгүүр орсон тохиолдолд энэхүү арилжаа нь манай сувгийн signal-тай нийцэхгүй."
 
                     # Append the promotional text
+                    translated_text = translated_text.replace(" -г ", "")
+                    translated_text = translated_text.replace("-г ", "")
+                    translated_text = translated_text.replace("📉", "")
+                    translated_text = translated_text.replace("📈", "")
+                    # First, remove checkmarks at the beginning of any line
+                    translated_text = re.sub(
+                        r"(^|\n)\s*✅✅\s+", r"\1", translated_text
+                    )
+
+                    # Then, ensure that any "Take Profit" lines that have checkmarks at the end keep them
+                    # (this is just to maintain the pattern you showed)
+                    translated_text = re.sub(
+                        r"(Take Profit \d+)(?!\s*✅✅)$",
+                        r"\1 ✅✅",
+                        translated_text,
+                        flags=re.MULTILINE,
+                    )
+                    # Add the closing part
                     translated_text += " \n\n 💸💸💸 Plus-Mongolia-Signal 💰💰💰"
 
                     await context.bot.send_message(
